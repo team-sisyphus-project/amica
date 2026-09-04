@@ -7,7 +7,7 @@
     "build": "npm run generate:paths && npm run build:workers && next build",
     "build:workers": "npm run build:worker:generateMeshBVH",
     "build:worker:generateMeshBVH": "esbuild src/workers/bvh/generateMeshBVH.worker.js --bundle --minify --sourcemap --outfile=public/generateMeshBVH.worker.js",
-    "start": "npm run generate:paths && next start",
+    "start": "next start",
     "export": "npm run generate:paths && next export",
     "i18n": "i18next",
     "lint": "next lint",
