@@ -1,24 +1,52 @@
 import isDev from "@/utils/isDev";
 import { readFile, writeFile } from "./utils/apiHelper";
 import path from "path";
+import os from "os";
+import fs from "fs";
 import { config } from "@/utils/config";
 
+// The app directory is a read-only rootfs at runtime; only /tmp is writable.
+// Store the data handler's JSON storage under the OS temp directory instead
+// of the app source tree.
+const dataHandlerStorageDir = path.join(os.tmpdir(), "amica-dataHandlerStorage");
+
 // Define file paths
-export const configFilePath = path.resolve(
-  "src/features/externalAPI/dataHandlerStorage/config.json",
+export const configFilePath = path.join(dataHandlerStorageDir, "config.json");
+export const subconsciousFilePath = path.join(
+  dataHandlerStorageDir,
+  "subconscious.json",
 );
-export const subconsciousFilePath = path.resolve(
-  "src/features/externalAPI/dataHandlerStorage/subconscious.json",
+export const logsFilePath = path.join(dataHandlerStorageDir, "logs.json");
+export const userInputMessagesFilePath = path.join(
+  dataHandlerStorageDir,
+  "userInputMessages.json",
 );
-export const logsFilePath = path.resolve(
-  "src/features/externalAPI/dataHandlerStorage/logs.json",
-);
-export const userInputMessagesFilePath = path.resolve(
-  "src/features/externalAPI/dataHandlerStorage/userInputMessages.json",
-);
-export const chatLogsFilePath = path.resolve(
-  "src/features/externalAPI/dataHandlerStorage/chatLogs.json",
-);
+export const chatLogsFilePath = path.join(dataHandlerStorageDir, "chatLogs.json");
+
+const defaultFileContents: Record<string, any> = {
+  [configFilePath]: {},
+  [subconsciousFilePath]: [],
+  [logsFilePath]: [],
+  [userInputMessagesFilePath]: [],
+  [chatLogsFilePath]: [],
+};
+
+// Ensure the storage directory (and seed files) exist before any read/write,
+// since /tmp is empty at boot.
+const ensureDataHandlerStorage = () => {
+  fs.mkdirSync(dataHandlerStorageDir, { recursive: true });
+  for (const [filePath, defaultContent] of Object.entries(defaultFileContents)) {
+    if (!fs.existsSync(filePath)) {
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify(defaultContent, null, 2),
+        "utf8",
+      );
+    }
+  }
+};
+
+ensureDataHandlerStorage();
 
 // GET Request Handlers
 export const handleGetConfig = () => readFile(configFilePath);
