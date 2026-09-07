@@ -190,3 +190,48 @@ export function computeFramingTargets(
 
   return { face, upperBody, fullBody };
 }
+
+/** Humanoid bones the framing presets read, in the order they are consulted. */
+export const FRAMING_BONE_NAMES = [
+  "head",
+  "chest",
+  "upperChest",
+  "hips",
+] as const;
+
+export type FramingBoneName = (typeof FRAMING_BONE_NAMES)[number];
+
+/**
+ * Looks up the world position of one humanoid bone, or `null` when the model
+ * does not have that bone.
+ */
+export type BonePositionLookup = (
+  name: FramingBoneName,
+) => Vector3Like | null | undefined;
+
+/**
+ * Derive framing targets by pulling bone world positions from a humanoid rig.
+ *
+ * This is the humanoid-facing entry point: it owns the bone selection rules so
+ * every caller resolves them identically. `chest` is optional in the VRM
+ * humanoid spec, so `upperChest` is consulted next; when neither exists
+ * {@link computeFramingTargets} falls back to the head/hips midpoint.
+ *
+ * @returns the three presets, or `null` when the rig has no usable `head` or
+ *   `hips` — a model that cannot be measured cannot be framed.
+ * @throws the same errors as {@link computeFramingTargets} when the bones exist
+ *   but describe an impossible model (head at or below hips, crown below the
+ *   floor).
+ */
+export function framingTargetsFromBonePositions(
+  getBonePosition: BonePositionLookup,
+  options: FramingOptions = {},
+): FramingTargets | null {
+  const head = getBonePosition("head");
+  const hips = getBonePosition("hips");
+  if (!isFinitePoint(head) || !isFinitePoint(hips)) return null;
+
+  const chest = getBonePosition("chest") ?? getBonePosition("upperChest");
+
+  return computeFramingTargets({ head, chest, hips }, options);
+}

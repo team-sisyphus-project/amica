@@ -33,6 +33,11 @@ import { XRControllerModelFactory } from "./XRControllerModelFactory";
 import { XRHandModelFactory } from "./XRHandModelFactory";
 import { Model } from "./model";
 import { Room } from "./room";
+import {
+  framingTargetsFromBonePositions,
+  FramingBoneName,
+  FramingTargets,
+} from "./cameraFraming";
 
 // Add the extension functions
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
@@ -201,6 +206,13 @@ export class Viewer {
 
   private scenario: any;
   private scenarioLoading: boolean = false;
+
+  /**
+   * Framing presets derived from the loaded model's humanoid bones.
+   * `null` whenever no model is loaded, or the loaded model lacks the bones
+   * framing needs. Recomputed on every model load, cleared on unload.
+   */
+  private framingTargets: FramingTargets | null = null;
 
   constructor() {
     this.isReady = false;
@@ -763,11 +775,67 @@ export class Viewer {
     // Temp Disable : WebXR
     // setLoadingProgress("Complete");
 
+    this.updateFramingTargets();
+
     // HACK: Adjust the camera position after playback because the origin of the animation is offset
     this.resetCamera();
   }
 
+  /**
+   * Framing presets (`face`, `upperBody`, `fullBody`) for the loaded model.
+   *
+   * Returns `null` when no model is loaded, or when the model's humanoid is
+   * missing the bones the presets are derived from. Callers must handle `null`
+   * rather than assume a model is present.
+   */
+  public getFramingTargets(): FramingTargets | null {
+    return this.framingTargets;
+  }
+
+  /**
+   * Recompute {@link framingTargets} from the loaded model's humanoid bones.
+   *
+   * Bone selection and its fallbacks live in the framing module; this method
+   * only supplies world positions and the viewer's camera FOV. A model the
+   * module cannot measure leaves the targets `null`.
+   */
+  private updateFramingTargets(): void {
+    this.framingTargets = null;
+
+    const vrm = this.model?.vrm;
+    const humanoid = vrm?.humanoid;
+    if (!humanoid) return;
+
+    // World positions are only meaningful once the matrices are current; the
+    // model was just added to the scene and may not have been rendered yet.
+    vrm?.scene?.updateMatrixWorld(true);
+
+    // Frame for the viewer's own camera; the module default applies when the
+    // camera has not been set up yet.
+    const options = this.camera ? { verticalFovDegrees: this.camera.fov } : {};
+
+    try {
+      this.framingTargets = framingTargetsFromBonePositions(
+        (name: FramingBoneName) => {
+          const node = humanoid.getNormalizedBoneNode(name);
+          return node ? node.getWorldPosition(new THREE.Vector3()) : null;
+        },
+        options,
+      );
+
+      if (!this.framingTargets) {
+        console.warn(
+          "framing targets unavailable: model humanoid is missing head or hips",
+        );
+      }
+    } catch (error) {
+      console.error("failed to compute framing targets", error);
+      this.framingTargets = null;
+    }
+  }
+
   public unloadVRM(): void {
+    this.framingTargets = null;
     if (this.model?.vrm) {
       this.scene!.remove(this.model.vrm.scene);
       // TODO if we don't dispose and create a new geometry then it seems like the performance gets slower
