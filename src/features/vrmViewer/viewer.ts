@@ -38,6 +38,11 @@ import {
   FramingBoneName,
   FramingTargets,
 } from "./cameraFraming";
+import {
+  CameraPose,
+  CameraTransitionController,
+  CAMERA_TRANSITION_DURATION_MS,
+} from "./cameraTransition";
 
 // Add the extension functions
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
@@ -214,6 +219,22 @@ export class Viewer {
    */
   private framingTargets: FramingTargets | null = null;
 
+  /**
+   * Drives eased camera moves. While a move is in flight it is the only writer
+   * of the camera pose; user input cancels it (wired up in {@link setup}).
+   */
+  private cameraTransitions = new CameraTransitionController({
+    readPose: () => ({
+      position: this.camera!.position,
+      target: this.cameraControls!.target,
+    }),
+    writePose: ({ position, target }) => {
+      this.camera!.position.set(position.x, position.y, position.z);
+      this.cameraControls!.target.set(target.x, target.y, target.z);
+      this.cameraControls!.update();
+    },
+  });
+
   constructor() {
     this.isReady = false;
     this.sendScreenshotToCallback = false;
@@ -315,6 +336,11 @@ export class Viewer {
     // Temp Disable : WebXR max -> 8
     cameraControls.maxDistance = 4;
     cameraControls.update();
+
+    // The user grabbing the camera outranks any animation: OrbitControls fires
+    // "start" on drag, wheel and touch, never on our own programmatic writes,
+    // so a running move yields instead of fighting the input.
+    this.cameraTransitions.cancelOnUserInput(cameraControls);
 
     const igroup = new InteractiveGroup();
     this.igroup = igroup;
@@ -1046,9 +1072,50 @@ export class Viewer {
   }
 
   /**
+   * Ease the camera to a new pose, animating position and orbit target together.
+   *
+   * Replaces any move already in flight — the newest request wins — and starts
+   * from wherever the camera is right now, so an interrupted move continues
+   * from the frame the user saw rather than snapping back.
+   *
+   * The move is driven by {@link update}; it does not run on its own.
+   *
+   * @param to pose to settle on.
+   * @param durationMs override for the default transition length.
+   * @returns `false` when there is no camera to move yet (setup has not run).
+   */
+  public startCameraTransition(
+    to: CameraPose,
+    durationMs: number = CAMERA_TRANSITION_DURATION_MS,
+  ): boolean {
+    if (!this.camera || !this.cameraControls) return false;
+
+    this.cameraTransitions.start(to, durationMs);
+    return true;
+  }
+
+  /**
+   * Drop the camera move in flight, leaving the camera where it had reached.
+   *
+   * Idempotent: harmless when nothing is running.
+   */
+  public cancelCameraTransition(): void {
+    this.cameraTransitions.cancel();
+  }
+
+  /** `true` while a camera move is animating. */
+  public isCameraTransitionActive(): boolean {
+    return this.cameraTransitions.isActive;
+  }
+
+  /**
    * VRMのheadノードを参照してカメラ位置を調整する
    */
   public resetCamera() {
+    // An explicit reset is a new framing decision; it must not be dragged back
+    // by a move that is still easing toward an older target.
+    this.cancelCameraTransition();
+
     const headNode = this.model?.vrm?.humanoid.getNormalizedBoneNode("head");
 
     if (headNode) {
@@ -1345,6 +1412,14 @@ export class Viewer {
     }
 
     this.modelMsPanel.update(performance.now() - ptime, 40);
+
+    // Before the render, so the frame shows this step rather than the last one.
+    try {
+      this.cameraTransitions.update(delta * 1000);
+    } catch (e) {
+      console.error("camera transition update error", e);
+      this.cancelCameraTransition();
+    }
 
     ptime = performance.now();
     try {
