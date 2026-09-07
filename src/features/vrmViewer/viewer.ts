@@ -43,6 +43,11 @@ import {
   CameraTransitionController,
   CAMERA_TRANSITION_DURATION_MS,
 } from "./cameraTransition";
+import {
+  framingPose,
+  FramingPresetId,
+  selectFramingTarget,
+} from "./framingPresets";
 
 // Add the extension functions
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
@@ -223,6 +228,13 @@ export class Viewer {
    * Drives eased camera moves. While a move is in flight it is the only writer
    * of the camera pose; user input cancels it (wired up in {@link setup}).
    */
+  /**
+   * Listeners notified when the user takes hold of the camera themselves.
+   * Held on the viewer rather than on `OrbitControls` so a subscriber can
+   * register before {@link setup} has created the controls.
+   */
+  private cameraUserInputListeners = new Set<() => void>();
+
   private cameraTransitions = new CameraTransitionController({
     readPose: () => ({
       position: this.camera!.position,
@@ -341,6 +353,11 @@ export class Viewer {
     // "start" on drag, wheel and touch, never on our own programmatic writes,
     // so a running move yields instead of fighting the input.
     this.cameraTransitions.cancelOnUserInput(cameraControls);
+
+    // Same "start" event, second audience: anything showing which framing is
+    // currently in effect has to stop claiming it the moment the user reframes
+    // by hand.
+    cameraControls.addEventListener("start", () => this.emitCameraUserInput());
 
     const igroup = new InteractiveGroup();
     this.igroup = igroup;
@@ -1092,6 +1109,81 @@ export class Viewer {
 
     this.cameraTransitions.start(to, durationMs);
     return true;
+  }
+
+  /**
+   * Ease the camera to one of the model's framing presets.
+   *
+   * The preset supplies the region to frame; the camera keeps the heading the
+   * user is currently orbiting from, so this reframes without re-aiming.
+   *
+   * @param preset which framing to move to.
+   * @param durationMs override for the default transition length.
+   * @returns `false` when the framing cannot be applied — no camera yet, or no
+   *   measurable model loaded — in which case the camera is left untouched and
+   *   the caller must not claim the preset is in effect.
+   */
+  public applyFramingPreset(
+    preset: FramingPresetId,
+    durationMs: number = CAMERA_TRANSITION_DURATION_MS,
+  ): boolean {
+    if (!this.camera || !this.cameraControls) return false;
+
+    const target = selectFramingTarget(this.framingTargets, preset);
+    if (!target) return false;
+
+    // OrbitControls clamps the orbit radius inside update(), so a preset that
+    // needs more room than the manual-zoom limits allow would land cropped.
+    // Widen the limits to admit this shot — and leave them widened, so the user
+    // can also reach it by hand afterwards.
+    this.cameraControls.minDistance = Math.min(
+      this.cameraControls.minDistance,
+      target.distance,
+    );
+    this.cameraControls.maxDistance = Math.max(
+      this.cameraControls.maxDistance,
+      target.distance,
+    );
+
+    return this.startCameraTransition(
+      framingPose(target, this.camera.position),
+      durationMs,
+    );
+  }
+
+  /**
+   * Subscribe to the user taking hold of the camera — drag, wheel or touch.
+   *
+   * Programmatic moves, including framing presets, never fire this: it means
+   * "the person reframed it themselves", which is what makes it safe to use as
+   * the signal that a preset is no longer the framing on screen.
+   *
+   * Safe to call before {@link setup}; the subscription survives it.
+   *
+   * @returns a function that removes the subscription.
+   */
+  public onCameraUserInput(listener: () => void): () => void {
+    this.cameraUserInputListeners.add(listener);
+    return () => {
+      this.cameraUserInputListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Notify {@link onCameraUserInput} subscribers.
+   *
+   * Iterates a copy so a listener that unsubscribes itself — the common case
+   * for a React effect cleanup — cannot skip its neighbours, and one throwing
+   * listener cannot silence the rest.
+   */
+  private emitCameraUserInput(): void {
+    for (const listener of Array.from(this.cameraUserInputListeners)) {
+      try {
+        listener();
+      } catch (error) {
+        console.error("camera user-input listener failed", error);
+      }
+    }
   }
 
   /**

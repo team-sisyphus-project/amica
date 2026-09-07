@@ -32,6 +32,10 @@ import {
 import { IconBrain } from '@tabler/icons-react';
 
 import { MenuButton } from "@/components/menuButton";
+import {
+  FramingPresetButtons,
+  useFramingPresets,
+} from "@/components/framingPresets";
 import { AssistantText } from "@/components/assistantText";
 import { SubconciousText } from "@/components/subconciousText";
 import { AddToHomescreen } from "@/components/addToHomescreen";
@@ -154,6 +158,11 @@ export default function Home() {
   const [isVRSupported, setIsVRSupported] = useState(false);
 
   const [isVRHeadset, setIsVRHeadset] = useState(false);
+
+  // Which framing preset the camera is showing; clears as soon as the user
+  // reframes by hand.
+  const { active: activeFramingPreset, select: selectFramingPreset } =
+    useFramingPresets(viewer);
 
 
   useEffect(() => {
@@ -519,6 +528,12 @@ export default function Home() {
                   onChange={toggleChatMode}
                 />
             </div>
+
+            <FramingPresetButtons
+              large={isVRHeadset}
+              active={activeFramingPreset}
+              onSelect={selectFramingPreset}
+            />
 
             <div className="flex flex-row items-center space-x-2">
               { showStreamWindow ? (
