@@ -38,6 +38,7 @@ import {
   FramingBoneName,
   FramingTargets,
 } from "./cameraFraming";
+import { measureModelBounds } from "./modelBounds";
 import {
   CameraPose,
   CameraTransitionController,
@@ -853,11 +854,15 @@ export class Viewer {
     // model was just added to the scene and may not have been rendered yet.
     vrm?.scene?.updateMatrixWorld(true);
 
-    // Frame for the viewer's own camera; the module default applies when the
-    // camera has not been set up yet.
-    const options = this.camera ? { verticalFovDegrees: this.camera.fov } : {};
-
     try {
+      // Frame for the viewer's own camera; the module default applies when the
+      // camera has not been set up yet. The measured silhouette is what keeps
+      // hair and heels inside the frame — bones alone cannot predict them.
+      const options = {
+        ...(this.camera ? { verticalFovDegrees: this.camera.fov } : {}),
+        modelBounds: vrm?.scene ? measureModelBounds(vrm.scene) : null,
+      };
+
       this.framingTargets = framingTargetsFromBonePositions(
         (name: FramingBoneName) => {
           const node = humanoid.getNormalizedBoneNode(name);

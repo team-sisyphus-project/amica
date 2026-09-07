@@ -220,6 +220,70 @@ describe("computeFramingTargets", () => {
     });
   });
 
+  describe("measured model bounds", () => {
+    /** A 1.75 m model whose hair reaches well past what the rig implies. */
+    const BOUNDS = { minY: -0.02, maxY: 1.75, frontDepth: 0.2 };
+
+    test("frames the measured crown, not the estimated one", () => {
+      const measured = computeFramingTargets(TALL_MODEL, {
+        modelBounds: BOUNDS,
+      });
+      const estimated = computeFramingTargets(TALL_MODEL);
+
+      const top = (t: FramingTarget) => t.target.y + t.framedHeight / 2;
+      for (const key of ["face", "upperBody", "fullBody"] as const) {
+        expect(top(measured[key])).toBeGreaterThanOrEqual(BOUNDS.maxY);
+        expect(top(estimated[key])).toBeLessThan(BOUNDS.maxY);
+      }
+    });
+
+    test("full body reaches the lowest measured point, below the floor", () => {
+      const { target, framedHeight } = computeFramingTargets(TALL_MODEL, {
+        modelBounds: BOUNDS,
+      }).fullBody;
+
+      expect(target.y - framedHeight / 2).toBeLessThanOrEqual(BOUNDS.minY);
+    });
+
+    test("stands the model's own depth further back", () => {
+      const withDepth = computeFramingTargets(TALL_MODEL, {
+        modelBounds: BOUNDS,
+      }).face;
+      const withoutDepth = computeFramingTargets(TALL_MODEL, {
+        modelBounds: { ...BOUNDS, frontDepth: 0 },
+      }).face;
+
+      expect(withDepth.framedHeight).toBeCloseTo(withoutDepth.framedHeight, 6);
+      expect(withDepth.distance - withoutDepth.distance).toBeCloseTo(
+        BOUNDS.frontDepth,
+        6,
+      );
+      // The framed height is the extent visible at the model's surface.
+      expect(
+        visibleHeightAt(withDepth.distance - BOUNDS.frontDepth),
+      ).toBeCloseTo(withDepth.framedHeight, 6);
+    });
+
+    test.each([
+      ["a crown at or below the head bone", { minY: 0, maxY: 1.4, frontDepth: 0.2 }],
+      ["a floor above the head bone", { minY: 1.5, maxY: 1.75, frontDepth: 0.2 }],
+      ["a non-finite extent", { minY: 0, maxY: NaN, frontDepth: 0.2 }],
+      ["a non-finite depth", { minY: 0, maxY: 1.75, frontDepth: Infinity }],
+    ])("falls back to rig estimates given %s", (_label, modelBounds) => {
+      expect(computeFramingTargets(TALL_MODEL, { modelBounds })).toEqual(
+        computeFramingTargets(TALL_MODEL),
+      );
+    });
+
+    test("ignores bounds that are absent", () => {
+      for (const modelBounds of [undefined, null]) {
+        expect(computeFramingTargets(TALL_MODEL, { modelBounds })).toEqual(
+          computeFramingTargets(TALL_MODEL),
+        );
+      }
+    });
+  });
+
   describe("degenerate input", () => {
     test("rejects a head that is not above the hips", () => {
       expect(() =>

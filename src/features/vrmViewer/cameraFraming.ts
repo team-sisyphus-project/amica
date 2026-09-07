@@ -38,10 +38,40 @@ export interface FramingBones {
 export interface FramingTarget {
   /** Point the orbit control should target. */
   readonly target: Vector3Like;
-  /** Distance from the target that fits `framedHeight` vertically. */
+  /**
+   * Distance from the target that fits `framedHeight` vertically.
+   *
+   * When {@link ModelBounds} are supplied the distance also clears the model's
+   * `frontDepth`, so `framedHeight` is the extent visible at the model's own
+   * surface — the part of it nearest the camera — rather than at the orbit
+   * target sitting inside the body.
+   */
   readonly distance: number;
   /** Vertical world-space extent this preset frames, in metres. */
   readonly framedHeight: number;
+}
+
+/**
+ * Measured world-space extent of a loaded model's geometry.
+ *
+ * Bones say where a character's joints are; they say nothing about how far the
+ * hair, ears or hem reach past them. Every bundled avatar's crown sits above
+ * the ratio a rig alone can predict — by 3 cm on the shortest-haired model and
+ * 12 cm on the tallest-haired one — so framing derived from bones alone crops
+ * the top of the head. Supplying the measured box replaces every estimate with
+ * the model's real silhouette.
+ */
+export interface ModelBounds {
+  /** Lowest point of the geometry: soles, or a hem that dips below the floor. */
+  readonly minY: number;
+  /** Highest point of the geometry: the crown, including hair and headwear. */
+  readonly maxY: number;
+  /**
+   * How far the geometry reaches toward the camera from the model's own axis,
+   * along the axis it faces. The framing distance clears it so a nose or a
+   * fringe nearer the camera than the orbit target is still fully in frame.
+   */
+  readonly frontDepth: number;
 }
 
 /** The full set of framing presets for one model. */
@@ -57,6 +87,15 @@ export interface FramingOptions {
    * degrees. Defaults to the viewer's camera FOV.
    */
   readonly verticalFovDegrees?: number;
+  /**
+   * Measured extent of the model's geometry, when the caller can measure it.
+   *
+   * Omitted — or measured into something that contradicts the rig, such as a
+   * crown at or below the head bone — the framing falls back to rig-only
+   * estimates. That keeps a model whose geometry cannot be measured framed
+   * approximately rather than not at all.
+   */
+  readonly modelBounds?: ModelBounds | null;
 }
 
 /**
@@ -73,12 +112,18 @@ export const DEFAULT_VERTICAL_FOV_DEGREES = 20;
  * head sits about a third of that span above the head bone.
  */
 const CROWN_ABOVE_HEAD_RATIO = 0.33;
-/** Height of a face close-up, as a multiple of the span. */
+/** Height of a face close-up, as a multiple of the span. Estimate-only. */
 const FACE_HEIGHT_RATIO = 0.45;
 /** How far below the chest the upper-body shot starts, as a multiple of the span. */
 const UPPER_BODY_BELOW_CHEST_RATIO = 0.35;
-/** Breathing room around the full-body shot, so feet and hair are not clipped. */
-const FULL_BODY_PADDING = 1.06;
+/** Breathing room around a framed region, so nothing sits on the frame edge. */
+const FRAME_PADDING = 1.06;
+/**
+ * How far below the head bone a face shot reaches, as a multiple of the
+ * measured head height (head bone to crown). The VRM head bone sits at the top
+ * of the neck, so the chin, jaw and a little neck live below it.
+ */
+const FACE_BELOW_HEAD_RATIO = 0.55;
 
 function isFinitePoint(point: Vector3Like | null | undefined): point is Vector3Like {
   return (
@@ -107,19 +152,69 @@ function makeTarget(
   target: Vector3Like,
   framedHeight: number,
   verticalFovDegrees: number,
+  frontDepth: number,
 ): FramingTarget {
   return {
     target,
-    distance: distanceForHeight(framedHeight, verticalFovDegrees),
+    // Standing the model's own depth further back keeps `framedHeight` the
+    // extent visible at its surface, not at the axis buried inside it.
+    distance: frontDepth + distanceForHeight(framedHeight, verticalFovDegrees),
     framedHeight,
   };
 }
 
 /**
+ * Frame the vertical band `[bottomY, topY]`, padded, centred on `anchor`'s
+ * horizontal position.
+ */
+function targetForBand(
+  anchor: Vector3Like,
+  bottomY: number,
+  topY: number,
+  verticalFovDegrees: number,
+  frontDepth: number,
+): FramingTarget {
+  return makeTarget(
+    { x: anchor.x, y: (topY + bottomY) / 2, z: anchor.z },
+    (topY - bottomY) * FRAME_PADDING,
+    verticalFovDegrees,
+    frontDepth,
+  );
+}
+
+/**
+ * Accept measured bounds only when they agree with the rig they will be mixed
+ * with: a crown above the head bone and a lowest point below it. Anything else
+ * is a measurement of something other than this model — an empty box, a stray
+ * helper object — and the rig-only estimates are the safer answer.
+ */
+function usableBounds(
+  bounds: ModelBounds | null | undefined,
+  head: Vector3Like,
+): ModelBounds | null {
+  if (!bounds) return null;
+
+  const { minY, maxY, frontDepth } = bounds;
+  if (
+    !Number.isFinite(minY) ||
+    !Number.isFinite(maxY) ||
+    !Number.isFinite(frontDepth)
+  ) {
+    return null;
+  }
+  if (maxY <= head.y || minY >= head.y) return null;
+
+  return { minY, maxY, frontDepth: Math.max(frontDepth, 0) };
+}
+
+/**
  * Derive the `face`, `upperBody` and `fullBody` orbit targets for one model.
  *
- * The floor is assumed to be `y = 0`, which is the VRM convention the viewer
- * already relies on, so the full-body shot spans ground to crown.
+ * The floor is `y = 0`, the VRM convention the viewer already relies on, so the
+ * full-body shot spans ground to crown. Pass {@link FramingOptions.modelBounds}
+ * whenever the model's geometry can be measured: the crown, the lowest point
+ * and the depth then come from the model itself instead of from humanoid
+ * averages, which is what keeps hair, heels and noses out of the frame edge.
  *
  * @throws {TypeError} if `head` or `hips` is missing or has a non-finite component.
  * @throws {RangeError} if the head is not above the hips, which would make every
@@ -162,33 +257,77 @@ export function computeFramingTargets(
   // is the closest stand-in that stays on the model's own axis.
   const chest = isFinitePoint(bones.chest) ? bones.chest : midpoint(head, hips);
 
-  const crownY = head.y + CROWN_ABOVE_HEAD_RATIO * span;
+  // Measured silhouette when the caller has one, rig estimate otherwise.
+  const bounds = usableBounds(options.modelBounds, head);
+  const crownY = bounds
+    ? bounds.maxY
+    : head.y + CROWN_ABOVE_HEAD_RATIO * span;
   if (crownY <= 0) {
     throw new RangeError(
       `computeFramingTargets: model crown (y=${crownY}) must be above the floor at y=0`,
     );
   }
 
-  const face = makeTarget(
-    { x: head.x, y: head.y, z: head.z },
-    FACE_HEIGHT_RATIO * span,
-    verticalFovDegrees,
-  );
-
+  // A hem or a heel may dip under the floor plane; frame from whichever is
+  // lower so nothing is cut off at the bottom of a full-body shot.
+  const floorY = bounds ? Math.min(bounds.minY, 0) : 0;
+  const frontDepth = bounds ? bounds.frontDepth : 0;
   const upperBodyBottomY = chest.y - UPPER_BODY_BELOW_CHEST_RATIO * span;
-  const upperBody = makeTarget(
-    { x: chest.x, y: (crownY + upperBodyBottomY) / 2, z: chest.z },
-    crownY - upperBodyBottomY,
-    verticalFovDegrees,
-  );
 
-  const fullBody = makeTarget(
-    { x: hips.x, y: crownY / 2, z: hips.z },
-    crownY * FULL_BODY_PADDING,
-    verticalFovDegrees,
-  );
+  if (!bounds) {
+    // Rig-only fallback: every extent is a proportion of the hips-to-head span,
+    // and the camera sits on the target's own plane because nothing is known
+    // about how far the model's surface reaches toward it.
+    return {
+      face: makeTarget(
+        { x: head.x, y: head.y, z: head.z },
+        FACE_HEIGHT_RATIO * span,
+        verticalFovDegrees,
+        0,
+      ),
+      upperBody: makeTarget(
+        { x: chest.x, y: (crownY + upperBodyBottomY) / 2, z: chest.z },
+        crownY - upperBodyBottomY,
+        verticalFovDegrees,
+        0,
+      ),
+      fullBody: makeTarget(
+        { x: hips.x, y: crownY / 2, z: hips.z },
+        crownY * FRAME_PADDING,
+        verticalFovDegrees,
+        0,
+      ),
+    };
+  }
 
-  return { face, upperBody, fullBody };
+  // Measured: every shot is a band with the real crown as its ceiling, so the
+  // top of the head is in frame on a model with tall hair as reliably as on a
+  // bald one.
+  const headHeight = crownY - head.y;
+
+  return {
+    face: targetForBand(
+      head,
+      head.y - FACE_BELOW_HEAD_RATIO * headHeight,
+      crownY,
+      verticalFovDegrees,
+      frontDepth,
+    ),
+    upperBody: targetForBand(
+      chest,
+      upperBodyBottomY,
+      crownY,
+      verticalFovDegrees,
+      frontDepth,
+    ),
+    fullBody: targetForBand(
+      hips,
+      floorY,
+      crownY,
+      verticalFovDegrees,
+      frontDepth,
+    ),
+  };
 }
 
 /** Humanoid bones the framing presets read, in the order they are consulted. */
