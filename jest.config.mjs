@@ -23,6 +23,16 @@ const config = {
   //   • @/features/externalAPI/externalAPI – constructs a URL at module level
   //     using process.env.NEXT_PUBLIC_DEVELOPMENT_BASE_URL which is undefined in CI
   // These stubs are only consulted by Jest; next build uses the real files.
+  // Only collect coverage from application source files in src/.
+  // This explicitly excludes __mocks__/ (test infrastructure) and other
+  // non-source directories so the doctor's test-coverage check does not
+  // flag mock files as "source files without test files".
+  collectCoverageFrom: [
+    'src/**/*.{js,jsx,ts,tsx}',
+    '!src/**/*.d.ts',
+    '!src/**/*.stories.{js,jsx,ts,tsx}',
+  ],
+
   moduleNameMapper: {
     // three.js ESM sub-paths that Jest cannot transform in CJS mode
     '^three/examples/jsm/(.*)$': '<rootDir>/__mocks__/threejsStub.js',
