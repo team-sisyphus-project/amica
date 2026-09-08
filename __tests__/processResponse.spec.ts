@@ -16,6 +16,8 @@ describe("Process Response Tests", () => {
       aiTextLog,
       receivedMessage,
       tag,
+      isThinking: false,
+      rolePlay: "",
       callback: (aiTalks: Screenplay[]) => {
         cbTriggered = true;
         expect(aiTalks).toEqual([]);
