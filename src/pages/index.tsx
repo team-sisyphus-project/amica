@@ -11,6 +11,7 @@ import { clsx } from "clsx";
 import { M_PLUS_2, Montserrat } from "next/font/google";
 import { useTranslation, Trans } from 'react-i18next';
 import {
+  ChatBubbleBottomCenterTextIcon,
   ChatBubbleLeftIcon,
   ChatBubbleLeftRightIcon,
   CloudArrowDownIcon,
@@ -59,6 +60,7 @@ import { langs } from '@/i18n/langs';
 import { VrmStoreProvider } from "@/features/vrmStore/vrmStoreContext";
 import { AmicaLifeContext } from "@/features/amicaLife/amicaLifeContext";
 import { ChatModeText } from "@/components/chatModeText";
+import { CaptionBar } from "@/components/captionBar";
 
 import { TimestampedPrompt } from "@/features/amicaLife/eventHandler";
 import { handleChatLogs } from "@/features/externalAPI/externalAPI";
@@ -141,6 +143,8 @@ export default function Home() {
   const [showChatMode, setShowChatMode] = useState(false);
   const [showSubconciousText, setShowSubconciousText] = useState(false);
   const [showMoshi, setShowMoshi] = useState(false);
+  const [showCaptions, setShowCaptions] = useState(false);
+  const [captionText, setCaptionText] = useState<string | null>(null);
 
   // null indicates havent loaded config yet
   const [muted, setMuted] = useState<boolean|null>(null);
@@ -308,6 +312,7 @@ export default function Home() {
       setShownMessage,
       setChatProcessing,
       setChatSpeaking,
+      setCaptionText,
     );
 
     // TODO remove in future
@@ -378,6 +383,11 @@ export default function Home() {
         )}
       </VrmStoreProvider>
       
+      <CaptionBar
+        text={muted ? (assistantMessage.replace(/\[(.*?)\]/g, "").trim() || null) : captionText}
+        visible={showCaptions}
+      />
+
       <MessageInputContainer isChatProcessing={chatProcessing} />
 
       {/* main menu */}
@@ -422,6 +432,13 @@ export default function Home() {
                 label="mute"
               />
             )}
+
+            <MenuButton
+              large={isVRHeadset}
+              icon={ChatBubbleBottomCenterTextIcon}
+              onClick={() => setShowCaptions((prev) => !prev)}
+              label={showCaptions ? "hide captions" : "show captions"}
+            />
 
             { webcamEnabled ? (
               <MenuButton

@@ -70,6 +70,7 @@ export class Chat {
   public setChatProcessing?: (processing: boolean) => void;
   public setChatSpeaking?: (speaking: boolean) => void;
   public setThoughtMessage?: (message: string) => void;
+  public setCaptionText?: (text: string | null) => void;
 
   // the message from the user that is currently being processed
   // it can be reset
@@ -90,6 +91,8 @@ export class Chat {
   private thoughtMessage: string;
 
   private lastAwake: number;
+
+  private captionClearTimer: ReturnType<typeof setTimeout> | null;
 
   public messageList: Message[];
 
@@ -116,6 +119,7 @@ export class Chat {
     this.currentStreamIdx = 0;
 
     this.lastAwake = 0;
+    this.captionClearTimer = null;
   }
 
   public initialize(
@@ -129,6 +133,7 @@ export class Chat {
     setShownMessage: (role: Role) => void,
     setChatProcessing: (processing: boolean) => void,
     setChatSpeaking: (speaking: boolean) => void,
+    setCaptionText?: (text: string | null) => void,
   ) {
     this.amicaLife = amicaLife;
     this.viewer = viewer;
@@ -140,6 +145,7 @@ export class Chat {
     this.setThoughtMessage = setThoughtMessage;
     this.setChatProcessing = setChatProcessing;
     this.setChatSpeaking = setChatSpeaking;
+    this.setCaptionText = setCaptionText;
 
     // these will run forever
     this.processTtsJobs();
@@ -248,6 +254,14 @@ export class Chat {
 
         this.bubbleMessage("assistant", speak.screenplay.text);
 
+        // Caption: cancel any pending clear and show the incoming sentence.
+        if (this.captionClearTimer !== null) {
+          clearTimeout(this.captionClearTimer);
+          this.captionClearTimer = null;
+        }
+        const captionText = speak.screenplay.talk.message.trim();
+        this.setCaptionText?.(captionText || null);
+
         if (speak.audioBuffer) {
           this.setChatSpeaking!(true);
           await this.viewer!.model?.speak(speak.audioBuffer, speak.screenplay);
@@ -255,6 +269,15 @@ export class Chat {
           this.isAwake() ? this.updateAwake() : null;
         }
       } while (this.speakJobs.size() > 0);
+
+      // Schedule caption clear so a quick-arriving next sentence cancels it.
+      if (this.captionClearTimer === null) {
+        this.captionClearTimer = setTimeout(() => {
+          this.setCaptionText?.(null);
+          this.captionClearTimer = null;
+        }, 400);
+      }
+
       await wait(50);
     }
   }
@@ -369,6 +392,13 @@ export class Chat {
     this.ttsJobs.clear();
     this.speakJobs.clear();
     // TODO stop viewer from speaking
+
+    // Clear caption immediately on interrupt.
+    if (this.captionClearTimer !== null) {
+      clearTimeout(this.captionClearTimer);
+      this.captionClearTimer = null;
+    }
+    this.setCaptionText?.(null);
   }
 
   // this happens either from text or from voice / whisper completion
