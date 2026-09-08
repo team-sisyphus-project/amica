@@ -46,6 +46,7 @@ export const defaults = {
   openrouter_url: process.env.NEXT_PUBLIC_OPENROUTER_URL ?? 'https://openrouter.ai/api/v1',
   openrouter_model: process.env.NEXT_PUBLIC_OPENROUTER_MODEL ?? 'openai/gpt-3.5-turbo',
   tts_muted: 'false',
+  show_captions: 'false',
   tts_backend: process.env.NEXT_PUBLIC_TTS_BACKEND ?? 'piper',
   stt_backend: process.env.NEXT_PUBLIC_STT_BACKEND ?? 'whisper_browser',
   vision_backend: process.env.NEXT_PUBLIC_VISION_BACKEND ?? 'vision_openai',

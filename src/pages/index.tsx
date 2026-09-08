@@ -169,6 +169,7 @@ export default function Home() {
       setMuted(config('tts_muted') === 'true');
     }
 
+    setShowCaptions(config('show_captions') === 'true');
     setShowArbiusIntroduction(config("show_arbius_introduction") === 'true');
 
     if (config("bg_color") !== '') {
@@ -230,6 +231,12 @@ export default function Home() {
   const toggleChatMode = () => {
     toggleState(setShowChatMode, [setShowChatLog, setShowSubconciousText]);
   };
+
+  function toggleCaptions() {
+    const next = !(config('show_captions') === 'true');
+    updateConfig('show_captions', next ? 'true' : 'false');
+    setShowCaptions(next);
+  }
 
   const toggleXR = async (immersiveType: XRSessionMode) => {
     console.log('Toggle XR', immersiveType);
@@ -436,7 +443,7 @@ export default function Home() {
             <MenuButton
               large={isVRHeadset}
               icon={ChatBubbleBottomCenterTextIcon}
-              onClick={() => setShowCaptions((prev) => !prev)}
+              onClick={toggleCaptions}
               label={showCaptions ? "hide captions" : "show captions"}
             />
 
